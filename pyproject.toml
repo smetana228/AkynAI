@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kyrpoet"
+version = "0.1.0"
+description = "Kyrgyz Poetry LLM: prosody-aware generation with a deterministic verifier in the loop"
+requires-python = ">=3.10"
+readme = "README.md"
+dependencies = []
+
+[project.optional-dependencies]
+# The prosody verifier (Phase 1) is intentionally dependency-light and needs
+# nothing beyond the standard library. These extras are only for later phases.
+dev = ["pytest>=7.4"]
+llm = ["anthropic>=0.40"]
+data = ["regex>=2024.0", "datasketch>=1.6"]  # cleaning + MinHash near-dup
+# Training/eval stack (Phase 4/5). Pinned loosely; install on a CUDA box.
+train = [
+  "torch>=2.3",
+  "transformers>=4.44",
+  "trl>=0.9",
+  "peft>=0.12",
+  "bitsandbytes>=0.43",
+  "datasets>=2.20",
+  "accelerate>=0.33",
+  "pyyaml>=6.0",
+]
+probe = ["transformers>=4.44", "tokenizers>=0.19"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

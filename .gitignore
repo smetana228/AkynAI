@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Data + model artifacts (large / non-redistributable)
+/data/
+checkpoints/
+runs/
+*.jsonl
+!eval_prompts/*.jsonl
+
+# Local env / secrets
+.env
+
+# macOS
+.DS_Store
