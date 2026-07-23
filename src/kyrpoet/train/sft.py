@@ -44,22 +44,30 @@ def run(cfg) -> None:  # pragma: no cover - GPU + heavy deps
                                           "val": cfg.data["val"]})
     ds = ds.map(lambda r: {"text": _format_chat(tok, r[instr_f], r[out_f])})
 
-    args = SFTConfig(
-        output_dir=cfg.output_dir,
-        learning_rate=cfg.train.get("lr", 1e-4),
-        lr_scheduler_type=cfg.train.get("scheduler", "cosine"),
-        num_train_epochs=cfg.train.get("epochs", 3),
-        max_seq_length=cfg.train.get("seq_len", 1024),
-        per_device_train_batch_size=cfg.train.get("batch_size", 4),
-        gradient_accumulation_steps=cfg.train.get("grad_accum", 8),
-        eval_steps=cfg.train.get("eval_steps", 100),
-        save_steps=cfg.train.get("save_steps", 200),
-        logging_steps=10,
-        seed=cfg.seed,
-        dataset_text_field="text",
-    )
-    trainer = SFTTrainer(model=model, tokenizer=tok, args=args,
-                         train_dataset=ds["train"], eval_dataset=ds["val"])
+    from .common import pick_kwarg, supported_kwargs
+
+    desired = {
+        "output_dir": cfg.output_dir,
+        "learning_rate": cfg.train.get("lr", 1e-4),
+        "lr_scheduler_type": cfg.train.get("scheduler", "cosine"),
+        "num_train_epochs": cfg.train.get("epochs", 3),
+        "per_device_train_batch_size": cfg.train.get("batch_size", 4),
+        "gradient_accumulation_steps": cfg.train.get("grad_accum", 8),
+        "eval_steps": cfg.train.get("eval_steps", 100),
+        "save_steps": cfg.train.get("save_steps", 200),
+        "logging_steps": 10,
+        "seed": cfg.seed,
+        "dataset_text_field": "text",
+    }
+    # renamed across TRL releases: max_seq_length -> max_length
+    desired.update(pick_kwarg(SFTConfig, ["max_length", "max_seq_length"],
+                              cfg.train.get("seq_len", 1024)))
+    args = SFTConfig(**supported_kwargs(SFTConfig, desired))
+
+    # renamed across TRL/transformers releases: tokenizer -> processing_class
+    tok_kw = pick_kwarg(SFTTrainer, ["processing_class", "tokenizer"], tok)
+    trainer = SFTTrainer(model=model, args=args, train_dataset=ds["train"],
+                         eval_dataset=ds["val"], **tok_kw)
     trainer.train()
     trainer.save_model(cfg.output_dir)
 

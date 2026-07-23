@@ -25,6 +25,36 @@ class TrainConfig:
     seed: int = 42
 
 
+def supported_kwargs(fn, desired: dict) -> dict:
+    """Keep only the kwargs the installed library version actually accepts.
+
+    TRL and transformers rename trainer arguments between releases (e.g.
+    ``max_seq_length`` -> ``max_length``, ``tokenizer`` -> ``processing_class``).
+    Filtering by the real signature keeps this working across versions instead
+    of pinning one exact release.
+    """
+    import inspect
+
+    params = inspect.signature(fn).parameters
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return dict(desired)  # takes **kwargs; can't introspect, pass it all
+    return {k: v for k, v in desired.items() if k in params}
+
+
+def pick_kwarg(fn, names: list[str], value) -> dict:
+    """Return {first supported name: value}, or {} if none are supported.
+
+    Use for arguments that were renamed — pass the preferred (newer) name first.
+    """
+    import inspect
+
+    params = inspect.signature(fn).parameters
+    for name in names:
+        if name in params:
+            return {name: value}
+    return {}
+
+
 def load_config(path: str) -> TrainConfig:
     """Parse a configs/*.yaml file into a TrainConfig."""
     import yaml  # part of the `train` extra

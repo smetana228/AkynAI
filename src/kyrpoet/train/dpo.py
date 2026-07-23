@@ -22,20 +22,26 @@ def run(config_path: str) -> None:  # pragma: no cover - GPU + heavy deps
     model, tok = build_qlora_model(cfg)
     ds = load_dataset("json", data_files=cfg.data["train"], split="train")
 
-    args = DPOConfig(
-        output_dir=cfg.output_dir,
-        beta=cfg.dpo.get("beta", 0.1),
-        learning_rate=cfg.dpo.get("lr", 5e-6),
-        lr_scheduler_type=cfg.dpo.get("scheduler", "cosine"),
-        num_train_epochs=cfg.dpo.get("epochs", 1),
-        max_length=cfg.dpo.get("seq_len", 1024),
-        per_device_train_batch_size=cfg.dpo.get("batch_size", 2),
-        gradient_accumulation_steps=cfg.dpo.get("grad_accum", 16),
-        save_steps=cfg.dpo.get("save_steps", 200),
-        logging_steps=10,
-        seed=cfg.seed,
-    )
-    trainer = DPOTrainer(model=model, tokenizer=tok, train_dataset=ds, args=args)
+    from .common import pick_kwarg, supported_kwargs
+
+    desired = {
+        "output_dir": cfg.output_dir,
+        "beta": cfg.dpo.get("beta", 0.1),
+        "learning_rate": cfg.dpo.get("lr", 5e-6),
+        "lr_scheduler_type": cfg.dpo.get("scheduler", "cosine"),
+        "num_train_epochs": cfg.dpo.get("epochs", 1),
+        "per_device_train_batch_size": cfg.dpo.get("batch_size", 2),
+        "gradient_accumulation_steps": cfg.dpo.get("grad_accum", 16),
+        "save_steps": cfg.dpo.get("save_steps", 200),
+        "logging_steps": 10,
+        "seed": cfg.seed,
+    }
+    desired.update(pick_kwarg(DPOConfig, ["max_length", "max_seq_length"],
+                              cfg.dpo.get("seq_len", 1024)))
+    args = DPOConfig(**supported_kwargs(DPOConfig, desired))
+
+    tok_kw = pick_kwarg(DPOTrainer, ["processing_class", "tokenizer"], tok)
+    trainer = DPOTrainer(model=model, train_dataset=ds, args=args, **tok_kw)
     trainer.train()
     trainer.save_model(cfg.output_dir)
 

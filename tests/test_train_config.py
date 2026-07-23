@@ -23,6 +23,42 @@ def test_sft_defaults_to_base_model():
     assert load_config("configs/sft.yaml").init_from is None
 
 
+def test_supported_kwargs_filters_by_signature():
+    from kyrpoet.train.common import supported_kwargs
+
+    def old_api(output_dir=None, max_seq_length=None):
+        pass
+
+    def new_api(output_dir=None, max_length=None):
+        pass
+
+    desired = {"output_dir": "x", "max_length": 512, "max_seq_length": 512}
+    assert supported_kwargs(old_api, desired) == {"output_dir": "x", "max_seq_length": 512}
+    assert supported_kwargs(new_api, desired) == {"output_dir": "x", "max_length": 512}
+
+    def takes_kwargs(**kw):
+        pass
+
+    assert supported_kwargs(takes_kwargs, desired) == desired  # can't introspect
+
+
+def test_pick_kwarg_prefers_newer_name():
+    from kyrpoet.train.common import pick_kwarg
+
+    def new_api(max_length=None):
+        pass
+
+    def old_api(max_seq_length=None):
+        pass
+
+    def neither(x=None):
+        pass
+
+    assert pick_kwarg(new_api, ["max_length", "max_seq_length"], 1024) == {"max_length": 1024}
+    assert pick_kwarg(old_api, ["max_length", "max_seq_length"], 1024) == {"max_seq_length": 1024}
+    assert pick_kwarg(neither, ["max_length", "max_seq_length"], 1024) == {}
+
+
 def test_resolve_init_from():
     from kyrpoet.train.sft import resolve_init_from
 
