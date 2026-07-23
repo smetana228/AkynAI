@@ -1,0 +1,30 @@
+# Supervised fine-tune (QLoRA, 4-bit) — Phase 4.2
+# Starts from the CPT checkpoint; trains instruction -> real poem using the chat template.
+base_model: Qwen/Qwen2.5-7B
+# Continue from a prior checkpoint. Left unset so an SFT-only run works out of the
+# box (useful as a cheap first validation); after running CPT, either set this to
+# checkpoints/cpt or pass --init-from checkpoints/cpt on the command line.
+init_from: null
+load_in_4bit: true
+lora:
+  r: 32
+  alpha: 64
+  dropout: 0.05
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+data:
+  train: data/sft/train.jsonl
+  val: data/sft/val.jsonl
+  instruction_field: instruction
+  output_field: output
+train:
+  lr: 1.0e-4
+  scheduler: cosine
+  warmup_ratio: 0.03
+  epochs: 3
+  seq_len: 1024
+  batch_size: 4
+  grad_accum: 8
+  eval_steps: 100
+  save_steps: 200
+output_dir: checkpoints/sft
+seed: 42

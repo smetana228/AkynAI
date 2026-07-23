@@ -1,0 +1,27 @@
+# Prosody-aware preference tuning (QLoRA DPO) — Phase 4.3
+# Where rhyme/meter quality is won. Pairs are built by scoring SFT samples with score_poem().
+base_model: Qwen/Qwen2.5-7B
+init_from: checkpoints/sft
+load_in_4bit: true
+lora:
+  r: 32
+  alpha: 64
+  dropout: 0.05
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+data:
+  train: data/dpo/pairs.jsonl     # {prompt, chosen, rejected}
+preference:
+  candidates_per_prompt: 6
+  min_score_gap: 0.15             # minimum overall-score gap chosen vs rejected
+  require_fluent_chosen: true     # optional LLM-judge fluency gate on chosen
+dpo:
+  beta: 0.1
+  lr: 5.0e-6
+  scheduler: cosine
+  epochs: 1
+  seq_len: 1024
+  batch_size: 2
+  grad_accum: 16
+  save_steps: 200
+output_dir: checkpoints/dpo
+seed: 42

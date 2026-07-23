@@ -1,0 +1,24 @@
+# Continued-pretraining (QLoRA, 4-bit) — Phase 4.1
+# Raises base-language fluency and absorbs poetic register before instruction tuning.
+base_model: Qwen/Qwen2.5-7B      # confirm via Phase 0 tokenizer probe
+load_in_4bit: true
+lora:
+  r: 32
+  alpha: 64
+  dropout: 0.05
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+data:
+  train: data/cpt/train.jsonl    # general ky + poetry, plain-LM
+  text_field: text
+train:
+  lr: 2.0e-4
+  scheduler: cosine
+  warmup_ratio: 0.03
+  epochs: 1
+  seq_len: 2048
+  batch_size: 2
+  grad_accum: 16
+  eval_steps: 200
+  save_steps: 500
+output_dir: checkpoints/cpt
+seed: 42
