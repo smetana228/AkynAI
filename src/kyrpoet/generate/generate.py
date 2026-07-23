@@ -65,12 +65,26 @@ class HFGenerator:
     def _load(self):  # pragma: no cover - requires GPU + weights
         if self._model is not None:
             return
+        import torch
         from peft import PeftModel
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from transformers import (
+            AutoModelForCausalLM,
+            AutoTokenizer,
+            BitsAndBytesConfig,
+        )
+
         base = self.base_model or base_model_from_adapter(self.checkpoint)
         self._tok = AutoTokenizer.from_pretrained(tokenizer_source(self.checkpoint, base))
-        model = AutoModelForCausalLM.from_pretrained(base, device_map="auto",
-                                                     load_in_4bit=True)
+        # must match the quantization used in training (see train/common.py)
+        bnb = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_use_double_quant=True,
+        )
+        model = AutoModelForCausalLM.from_pretrained(
+            base, device_map="auto", quantization_config=bnb
+        )
         self._model = PeftModel.from_pretrained(model, self.checkpoint)
 
     def __call__(self, topic: str, form: PoemForm | None = None) -> str:  # pragma: no cover
