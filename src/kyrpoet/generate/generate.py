@@ -7,8 +7,34 @@ runs the chat template (needs the ``train`` extra + a GPU checkpoint).
 from __future__ import annotations
 
 import argparse
+import json
+import os
 
 from ..prosody.scorer import PoemForm
+
+
+def base_model_from_adapter(checkpoint: str) -> str:
+    """Base model id recorded in a PEFT checkpoint's adapter_config.json.
+
+    A LoRA checkpoint holds only adapter weights, so the base model has to come
+    from somewhere; PEFT writes it into adapter_config.json at save time. Falls
+    back to the checkpoint path itself (a full, non-adapter model directory).
+    """
+    cfg = os.path.join(checkpoint, "adapter_config.json")
+    if os.path.exists(cfg):
+        with open(cfg, encoding="utf-8") as fh:
+            base = json.load(fh).get("base_model_name_or_path")
+        if base:
+            return base
+    return checkpoint
+
+
+def tokenizer_source(checkpoint: str, base: str) -> str:
+    """Prefer the checkpoint's tokenizer — it carries the chat template the
+    model was actually trained with."""
+    if os.path.exists(os.path.join(checkpoint, "tokenizer_config.json")):
+        return checkpoint
+    return base
 
 
 def build_prompt(topic: str, form: PoemForm | None = None) -> str:
@@ -41,8 +67,8 @@ class HFGenerator:
             return
         from peft import PeftModel
         from transformers import AutoModelForCausalLM, AutoTokenizer
-        base = self.base_model or self.checkpoint
-        self._tok = AutoTokenizer.from_pretrained(base)
+        base = self.base_model or base_model_from_adapter(self.checkpoint)
+        self._tok = AutoTokenizer.from_pretrained(tokenizer_source(self.checkpoint, base))
         model = AutoModelForCausalLM.from_pretrained(base, device_map="auto",
                                                      load_in_4bit=True)
         self._model = PeftModel.from_pretrained(model, self.checkpoint)
@@ -59,6 +85,22 @@ class HFGenerator:
         return self._tok.decode(out[0][inputs.shape[1]:], skip_special_tokens=True).strip()
 
 
+def check_checkpoint(path: str) -> str | None:
+    """Error message if ``path`` isn't a local checkpoint directory, else None.
+
+    Without this, transformers treats the path as a Hub repo id and fails with
+    an opaque 401 instead of saying the directory is missing.
+    """
+    if os.path.isdir(path):
+        return None
+    import glob
+
+    found = sorted(d for d in glob.glob("checkpoints/*") if os.path.isdir(d))
+    msg = f"checkpoint not found: {path}"
+    return msg + (f"\navailable: {', '.join(found)}" if found
+                  else "\nno checkpoints/ directory — train a model first")
+
+
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover - CLI/infra
     ap = argparse.ArgumentParser(description="Generate a Kyrgyz poem")
     ap.add_argument("--topic", required=True)
@@ -69,6 +111,12 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - CLI/infra
     ap.add_argument("--rhyme-scheme", default=None)
     ap.add_argument("--best-of", type=int, default=1)
     args = ap.parse_args(argv)
+
+    problem = check_checkpoint(args.checkpoint)
+    if problem:
+        import sys
+        print(problem, file=sys.stderr)
+        return 1
 
     syllables = None
     if args.syllables:

@@ -141,7 +141,11 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - CLI/infra
     ap.add_argument("--judge", action="store_true", help="add LLM-as-judge track")
     args = ap.parse_args(argv)
 
-    from ..generate.generate import HFGenerator
+    from ..generate.generate import HFGenerator, check_checkpoint
+    problem = check_checkpoint(args.checkpoint)
+    if problem:
+        print(problem, file=sys.stderr)
+        return 1
     generator = HFGenerator(args.checkpoint, args.base_model)
     backend = None
     if args.judge:
