@@ -1,37 +1,50 @@
-<!-- ─────────────────────────────────────────────────────────────────────── -->
-## Implementation status
+# AkynAI — a Kyrgyz poetry LLM
 
-The spec text follows below, unchanged. **83 tests pass** (`pytest -q`).
+An open-source LLM fine-tuned to write original Kyrgyz poems on a given topic,
+with controllable form (line count, syllables per line, rhyme scheme) and
+respect for traditional Kyrgyz prosody.
 
-| Phase | Module | State |
-|-------|--------|-------|
-| M0 scaffold | `pyproject.toml`, package tree, `configs/*.yaml`, `scripts/*.sh` | done |
-| **M1 verifier** | `src/kyrpoet/prosody/*` | **done + fully unit-tested** |
-| M0 probe | `src/kyrpoet/tokenizer_probe.py` | CLI done; needs HF tokenizers to rank |
-| M2 ingest/clean | `data/ingest.py`, `data/clean.py` | **done + tested** (CLIs verified end-to-end) |
-| M3 back-gen | `data/backgen.py`, `data/build_datasets.py` | logic **done + tested**; live run needs `ANTHROPIC_API_KEY` |
-| M5 generate/eval | `generate/*`, `eval/evaluate.py` | selection/aggregation **done + tested**; poem generation needs a checkpoint |
-| M4 training | `train/cpt.py`, `sft.py`, `dpo.py` | runnable QLoRA **scaffolds** (config-driven); need GPU + `.[train]` |
+The strategic idea: Kyrgyz orthography is near-phonemic, so **meter and rhyme
+can be checked deterministically in code**. That verifier then sits in the loop
+at every stage — data cleaning, evaluation, inference-time rejection sampling,
+and preference tuning — which is what makes prosody good rather than accidental.
 
-Everything except model **training** and **live LLM calls** is unit-tested and runs offline. The training scripts and HF/Anthropic model loading are import-lazy scaffolds — real but unverifiable without a GPU / API key.
+**Status:** pipeline validated end to end. An SFT-only baseline is trained and
+measured; CPT and DPO are built but not yet run. See [RESULTS.md](RESULTS.md).
 
-**Decisions recorded**
-- Base model default: **Qwen2.5-7B**, pending the Phase 0 fertility probe (§3). The probe defaults to Qwen unless an alternative's fertility is >15% better.
-- The prosody verifier has **zero runtime dependencies** (stdlib only); ML deps live in optional extras (`dev`, `llm`, `probe`, `train`).
+## Where it stands
 
-**Setup**
+| Stage | State |
+|---|---|
+| Prosody verifier (§4) | done, fully unit-tested — **99 tests** |
+| Corpus ingest + clean (§5) | done — 1,625 poems, 82K lines |
+| Instruction back-generation (§6) | done — 1,825 SFT pairs |
+| Continued pretraining (§7.1) | built, **not yet run** |
+| Instruction tuning (§7.2) | **run** — baseline measured |
+| Preference tuning / DPO (§7.3) | built, **not yet run** |
+| Generation + eval (§8) | done, verified on a real checkpoint |
+
+**Corpus** (gitignored — scraped text is not redistributed):
+
+| Bucket | Poems | Lines | Share |
+|---|---:|---:|---:|
+| Classic poetry | 1,002 | 55,798 | 67.7% |
+| Manas (epic) | 1 | 12,237 | 14.8% |
+| Modern songs | 622 | 14,419 | 17.5% |
+
+Manas is deliberately kept a minority so the model does not collapse into epic
+register. General Kyrgyz prose (Wikipedia, 83M chars) backs the CPT stage.
+
+## Setup
+
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"        # verifier + data layer + pytest
+pytest -q                      # 99 tests, no GPU or API key needed
 ```
 
-**Run what's built (offline)**
-```bash
-pytest -q                                                        # 83 tests
-./scripts/ingest.sh <dir_of_txt_poems> <source> <license>       # -> data/raw/poems.jsonl
-./scripts/clean.sh                                               # -> data/clean/poems.jsonl (prosody-tagged)
-python -m kyrpoet.data.build_datasets cpt                        # -> data/cpt/train.jsonl
-```
+The prosody verifier has **zero runtime dependencies**; ML and LLM deps live in
+optional extras (`dev`, `llm`, `probe`, `train`).
 
 ```python
 from kyrpoet.prosody import score_poem, PoemForm
@@ -39,14 +52,40 @@ score = score_poem(poem_text, PoemForm(n_lines=4, syllables=(7, 8), rhyme_scheme
 print(score.syllables_per_line, score.detected_rhyme_scheme, score.overall)
 ```
 
-**Needs infrastructure**
+## Pipeline
+
 ```bash
-pip install -e ".[probe]" && ./scripts/probe.sh data/sample_ky.txt   # HF tokenizers
-pip install -e ".[llm]"   && export ANTHROPIC_API_KEY=...            # back-gen + LLM judge
-pip install -e ".[train]" && ./scripts/train.sh                      # QLoRA CPT->SFT->DPO on a GPU
-./scripts/generate.sh --topic "көктөм" --n-lines 4 --syllables 7-8 --best-of 8
-./scripts/evaluate.sh --checkpoint checkpoints/dpo --judge
+# 1. corpus -> prosody-tagged JSONL
+python scripts/build_corpus.py
+python -m kyrpoet.data.clean
+
+# 2. instruction pairs (needs ANTHROPIC_API_KEY, or --backend ollama for a local model)
+pip install -e ".[llm]"
+python -m kyrpoet.data.backgen --backend anthropic --batch --skip-existing
+python -m kyrpoet.data.build_datasets sft --max-lines 48
+
+# 3. CPT corpus (poetry upsampled so it isn't swamped by general prose)
+python scripts/fetch_general_ky.py
+python -m kyrpoet.data.build_datasets cpt --extra data/cpt/general_ky.jsonl --poetry-frac 0.10
+
+# 4. train on a 24GB GPU
+pip install -e ".[train]"
+./scripts/train.sh                                    # CPT -> SFT -> DPO
+python -m kyrpoet.train.sft --config configs/sft.yaml # or SFT-only from base
+
+# 5. generate + evaluate
+python -m kyrpoet.generate.generate --checkpoint checkpoints/sft \
+    --topic "көктөм" --n-lines 4 --syllables 7-8 --best-of 8
+python -m kyrpoet.eval.evaluate --checkpoint checkpoints/sft
 ```
+
+Base model is **Qwen2.5-7B** (all training is 4-bit QLoRA); `kyrpoet.tokenizer_probe`
+ranks alternatives by tokenizer fertility on Kyrgyz, which matters because rhyme
+lives in the word-final characters subword merges tend to bury.
+
+---
+
+The original build spec follows, unchanged.
 
 <!-- ─────────────────────────────────────────────────────────────────────── -->
 
