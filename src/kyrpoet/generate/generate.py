@@ -29,6 +29,18 @@ def base_model_from_adapter(checkpoint: str) -> str:
     return checkpoint
 
 
+def max_new_tokens_for(form: PoemForm | None, default: int = 256,
+                       per_line: int = 32, floor: int = 128) -> int:
+    """Output budget scaled to the requested line count.
+
+    A fixed cap truncates long poems mid-word and wastes sampling on short ones,
+    so size the budget from ``n_lines`` when the caller asked for one.
+    """
+    if form is None or form.n_lines is None:
+        return default
+    return max(floor, per_line * form.n_lines + 32)
+
+
 def tokenizer_source(checkpoint: str, base: str) -> str:
     """Prefer the checkpoint's tokenizer — it carries the chat template the
     model was actually trained with."""
@@ -55,10 +67,12 @@ class HFGenerator:
     """Loads a (QLoRA) checkpoint and generates via the base model's chat template."""
 
     def __init__(self, checkpoint: str, base_model: str | None = None,
-                 max_new_tokens: int = 256):
+                 max_new_tokens: int | None = None,
+                 repetition_penalty: float = 1.15):
         self.checkpoint = checkpoint
         self.base_model = base_model
-        self.max_new_tokens = max_new_tokens
+        self.max_new_tokens = max_new_tokens  # None -> scale with n_lines
+        self.repetition_penalty = repetition_penalty
         self._model = None
         self._tok = None
 
@@ -99,10 +113,11 @@ class HFGenerator:
         enc = self._tok(text, return_tensors="pt").to(self._model.device)
         out = self._model.generate(
             **enc,
-            max_new_tokens=self.max_new_tokens,
+            max_new_tokens=self.max_new_tokens or max_new_tokens_for(form),
             do_sample=True,
             temperature=0.9,
             top_p=0.95,
+            repetition_penalty=self.repetition_penalty,
             pad_token_id=self._tok.pad_token_id or self._tok.eos_token_id,
         )
         generated = out[0][enc["input_ids"].shape[1]:]
@@ -134,6 +149,10 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - CLI/infra
     ap.add_argument("--syllables", default=None, help="e.g. 7-8 or 7")
     ap.add_argument("--rhyme-scheme", default=None)
     ap.add_argument("--best-of", type=int, default=1)
+    ap.add_argument("--max-new-tokens", type=int, default=None,
+                    help="output cap (default: scales with --n-lines)")
+    ap.add_argument("--repetition-penalty", type=float, default=1.15,
+                    help="curbs repeated lines; 1.0 disables")
     args = ap.parse_args(argv)
 
     problem = check_checkpoint(args.checkpoint)
@@ -151,7 +170,9 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - CLI/infra
         form = PoemForm(n_lines=args.n_lines, syllables=syllables,
                         rhyme_scheme=args.rhyme_scheme)
 
-    gen = HFGenerator(args.checkpoint, args.base_model)
+    gen = HFGenerator(args.checkpoint, args.base_model,
+                      max_new_tokens=args.max_new_tokens,
+                      repetition_penalty=args.repetition_penalty)
     if args.best_of > 1:
         from .rejection_sample import best_of_n
         result = best_of_n(gen, args.topic, form, n=args.best_of)

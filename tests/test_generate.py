@@ -4,6 +4,7 @@ from kyrpoet.generate.generate import (
     base_model_from_adapter,
     build_prompt,
     check_checkpoint,
+    max_new_tokens_for,
     tokenizer_source,
 )
 from kyrpoet.generate.rejection_sample import best_of_n
@@ -48,6 +49,18 @@ def test_tokenizer_source_prefers_checkpoint(tmp_path):
     # tokenizer saved with the checkpoint -> use it (keeps the trained template)
     (ckpt / "tokenizer_config.json").write_text("{}", encoding="utf-8")
     assert tokenizer_source(str(ckpt), "Qwen/Qwen2.5-7B") == str(ckpt)
+
+
+def test_max_new_tokens_scales_with_line_count():
+    # no form / no n_lines -> the flat default
+    assert max_new_tokens_for(None) == 256
+    assert max_new_tokens_for(PoemForm(syllables=(7, 8))) == 256
+    # short poem -> floored, not wastefully large
+    assert max_new_tokens_for(PoemForm(n_lines=4)) == 160
+    # long poem -> enough budget to avoid truncating mid-word
+    assert max_new_tokens_for(PoemForm(n_lines=48)) == 1568
+    # a very short request still gets a usable floor
+    assert max_new_tokens_for(PoemForm(n_lines=2)) == 128
 
 
 def test_check_checkpoint(tmp_path):
